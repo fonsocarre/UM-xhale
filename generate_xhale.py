@@ -44,38 +44,11 @@ ea_tail = 0.25
 main_wing_chord = 0.2
 tail_chord = 0.11
 
-# stiffness_main = np.zeros((6, 6))
-# stiffness_main[0, 0] = 2.14e6 # ext stiffness
-# stiffness_main[1, 1] = 2.14e6 # not given
-# stiffness_main[2, 2] = 2.14e6 # not given
-# stiffness_main[3, 3] = 55.8 # torsional stiffness
-# stiffness_main[4, 4] = 1.04e2 # out-of-plane stiffness
-# stiffness_main[5, 5] = 6.35e3 # in-plane stiffness
-# stiffness_main[4, 5] = -46.34 # out/in-plane stiffness
-# stiffness_main[5, 4] = -46.34 # out/in-plane stiffness
-# stiffness_main[0, 5] = -4.91e4 # ext/in-plane stiffness
-# stiffness_main[5, 0] = -4.91e4 # ext/in-plane stiffness
-# stiffness_main[0, 4] = 1.54e3 # ext/out-of-plane stiffness
-# stiffness_main[4, 0] = 1.54e3 # ext/out-of-plane stiffness
-
-
-# m_bar_main = 0.394
-# mass_main = np.zeros((6, 6))
-# mass_main[0, 0] = m_bar_main
-# mass_main[1, 1] = m_bar_main
-# mass_main[2, 2] = m_bar_main
-# mass_main[3, 3] = 8.09e-4
-# mass_main[4, 4] = 1.22e-5
-# mass_main[5, 5] = 7.97e-4
-# mass_main[4, 5] = -6.49e-4
-# mass_main[5, 4] = -6.49e-4
-
-
 n_sections = 3
 
 # DISCRETISATION
 # spatial discretisation
-m = 10
+m = 5
 n_elem_multiplier = 1
 n_elem_section = 3
 n_elem_centre_tail = 2
@@ -114,12 +87,6 @@ n_elem += n_elem_tail
 n_elem += n_elem_outer_tail
 n_elem += n_elem_tail
 n_elem += n_elem_tail
-# n_elem += n_elem_outer_tail
-# n_elem += n_elem_tail
-# n_elem += n_elem_tail
-# n_elem += n_elem_outer_tail
-# n_elem += n_elem_tail
-# n_elem += n_elem_tail
 
 # number of nodes per part
 n_node_section = n_elem_section*(n_node_elem - 1) + 1
@@ -146,12 +113,6 @@ n_node += n_node_tail - 1
 n_node += n_node_outer_tail - 1
 n_node += n_node_tail - 1
 n_node += n_node_tail - 1
-# n_node += n_node_outer_tail - 1
-# n_node += n_node_tail - 1
-# n_node += n_node_tail - 1
-# n_node += n_node_outer_tail - 1
-# n_node += n_node_tail - 1
-# n_node += n_node_tail - 1
 
 # stiffness and mass matrices
 n_stiffness = 5
@@ -188,16 +149,6 @@ end_tails_nodesR = np.zeros((2, ), dtype=int)
 end_tails_elementsR = np.zeros((2, ), dtype=int)
 end_of_centre_tail_node  = 0
 end_of_centre_tail_elem  = 0
-
-# end_tip_tails_nodesRR = np.zeros((3*2, ), dtype=int)
-# end_tip_tails_nodesRL = np.zeros((3*2, ), dtype=int)
-# end_tip_tails_nodesLR = np.zeros((3*2, ), dtype=int)
-# end_tip_tails_nodesLL = np.zeros((3*2, ), dtype=int)
-#
-# end_tip_tails_elemRR = np.zeros((3*2, ), dtype=int)
-# end_tip_tails_elemRL = np.zeros((3*2, ), dtype=int)
-# end_tip_tails_elemLR = np.zeros((3*2, ), dtype=int)
-# end_tip_tails_elemLL = np.zeros((3*2, ), dtype=int)
 
 end_tip_tail_nodeC = np.zeros((2, ), dtype=int)
 end_tip_tail_elemC = np.zeros((2, ), dtype=int)
@@ -241,8 +192,6 @@ def clean_test_files():
 
 def read_beam_data(filename='inputs/beam_properties.xlsx'):
     import pandas as pd
-    sections = ['Inboard', 'Outboard', 'Dihedral']
-
     # mass
     mass_sheet = pd.read_excel(filename, sheetname='mass', header=1, skip_rows=1, index_col=0)
     # remove units
@@ -273,7 +222,7 @@ def read_beam_data(filename='inputs/beam_properties.xlsx'):
 
     return mass_data, stiff_data
 
-
+def read_lumped_mass_data(filename='inputs/lumped_mass.xlsx'):
 
 
 
@@ -801,13 +750,15 @@ def read_aero_data(filename='inputs/aero_properties.xlsx'):
         for item in val['value'].items():
             aero_data[sheet][item[0]] = item[1]
 
+    # import pdb; pdb.set_trace()
     return aero_data
 
 
 def generate_aero_file():
     global x, y, z
 
-    # aero_data = read_aero_data()
+    aero_data = read_aero_data()
+    print(aero_data)
     # control surfaces
     n_control_surfaces = 0
     control_surface = np.zeros((n_elem, n_node_elem), dtype=int) - 1
@@ -822,18 +773,19 @@ def generate_aero_file():
     initial_elem = 0
     final_elem = end_elementsR[-1]
     i_surf = 0
-    airfoil_distribution[initial_elem: final_elem + 1, :] = 0
+    airfoil_distribution[initial_elem: final_elem + 1, :] = aero_data['airfoil_indices'][aero_data[type]['airfoil']]
     surface_distribution[initial_elem: final_elem + 1] = i_surf
     surface_m[i_surf] = m
     aero_node[initial_node:final_node + 1] = True
-    temp_chord = np.linspace(main_wing_chord, main_wing_chord, final_node + 1 - initial_node)
     node_counter = 0
     for i_elem in range(initial_elem, final_elem + 1):
         for i_local_node in range(n_node_elem):
             if not i_local_node == 0:
                 node_counter += 1
-            chord[i_elem, i_local_node] = temp_chord[node_counter]
-            elastic_axis[i_elem, i_local_node] = ea_main
+            # chord[i_elem, i_local_node] = temp_chord[node_counter]
+            chord[i_elem, i_local_node] = aero_data[type]['chord']
+            elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
+            twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
 
     # left wing (surface 1, beams 4, 5, 6, 7)
     initial_node = end_nodesR[-1] + 1
@@ -841,26 +793,27 @@ def generate_aero_file():
     initial_elem = end_elementsR[-1] + 1
     final_elem = end_elementsL[-1]
     i_surf += 1
-    airfoil_distribution[initial_elem: final_elem + 1, :] = 0
+    airfoil_distribution[initial_elem: final_elem + 1, :] = aero_data['airfoil_indices'][aero_data[type]['airfoil']]
     surface_distribution[initial_elem: final_elem + 1] = i_surf
     surface_m[i_surf] = m
     aero_node[initial_node:final_node + 1] = True
-    temp_chord = np.linspace(main_wing_chord, main_wing_chord, final_node + 1 - initial_node + 1)
     node_counter = 0
     for i_elem in range(initial_elem, final_elem + 1):
         for i_local_node in range(n_node_elem):
             if not i_local_node == 0:
                 node_counter += 1
-            chord[i_elem, i_local_node] = temp_chord[node_counter]
-            elastic_axis[i_elem, i_local_node] = ea_main
+            chord[i_elem, i_local_node] = aero_data[type]['chord']
+            elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
+            twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
 
     # centre tail
     # import pdb; pdb.set_trace()
+    type = 'Ctail'
     elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == tail_beam_numbersC[1]]
     i_surf += 1
     for i_elem in elements:
         for i_node in range(n_node_elem):
-            airfoil_distribution[i_elem, :] = 1
+            airfoil_distribution[i_elem, :] = aero_data['airfoil_indices'][aero_data[type]['airfoil']]
             aero_node[conn[i_elem, i_node]] = True
     surface_distribution[elements] = i_surf
     surface_m[i_surf] = m
@@ -869,14 +822,15 @@ def generate_aero_file():
         for i_local_node in [0, 1, 2]:
             if not i_local_node == 0:
                 node_counter += 1
-            chord[i_elem, i_local_node] = tail_chord
-            elastic_axis[i_elem, i_local_node] = ea_tail
+            chord[i_elem, i_local_node] = aero_data[type]['chord']
+            elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
+            twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
 
     elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == tail_beam_numbersC[2]]
     i_surf += 1
     for i_elem in elements:
         for i_node in range(n_node_elem):
-            airfoil_distribution[i_elem, :] = 1
+            airfoil_distribution[i_elem, :] = aero_data['airfoil_indices'][aero_data[type]['airfoil']]
             aero_node[conn[i_elem, i_node]] = True
     surface_distribution[elements] = i_surf
     surface_m[i_surf] = m
@@ -885,16 +839,17 @@ def generate_aero_file():
         for i_local_node in [0, 1, 2]:
             if not i_local_node == 0:
                 node_counter += 1
-            chord[i_elem, i_local_node] = tail_chord
-            elastic_axis[i_elem, i_local_node] = ea_tail
+            chord[i_elem, i_local_node] = aero_data[type]['chord']
+            elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
+            twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
 
     # 0R tail
-    # import pdb; pdb.set_trace()
+    type = '0Rtail'
     elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == tail_beam_numbersR[0,1]]
     i_surf += 1
     for i_elem in elements:
         for i_node in range(n_node_elem):
-            airfoil_distribution[i_elem, :] = 1
+            airfoil_distribution[i_elem, :] = aero_data['airfoil_indices'][aero_data[type]['airfoil']]
             aero_node[conn[i_elem, i_node]] = True
     surface_distribution[elements] = i_surf
     surface_m[i_surf] = m
@@ -904,14 +859,15 @@ def generate_aero_file():
         for i_local_node in [0, 1, 2]:
             if not i_local_node == 0:
                 node_counter += 1
-            chord[i_elem, i_local_node] = tail_chord
-            elastic_axis[i_elem, i_local_node] = ea_tail
+            chord[i_elem, i_local_node] = aero_data[type]['chord']
+            elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
+            twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
 
     elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == tail_beam_numbersR[0,2]]
     i_surf += 1
     for i_elem in elements:
         for i_node in range(n_node_elem):
-            airfoil_distribution[i_elem, :] = 1
+            airfoil_distribution[i_elem, :] = aero_data['airfoil_indices'][aero_data[type]['airfoil']]
             aero_node[conn[i_elem, i_node]] = True
     surface_distribution[elements] = i_surf
     surface_m[i_surf] = m
@@ -920,16 +876,18 @@ def generate_aero_file():
         for i_local_node in [0, 1, 2]:
             if not i_local_node == 0:
                 node_counter += 1
-            chord[i_elem, i_local_node] = tail_chord
-            elastic_axis[i_elem, i_local_node] = ea_tail
+            chord[i_elem, i_local_node] = aero_data[type]['chord']
+            elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
+            twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
 
     # 1R tail
     # import pdb; pdb.set_trace()
+    type = '0Rtail'
     elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == tail_beam_numbersR[1,1]]
     i_surf += 1
     for i_elem in elements:
         for i_node in range(n_node_elem):
-            airfoil_distribution[i_elem, :] = 1
+            airfoil_distribution[i_elem, :] = aero_data['airfoil_indices'][aero_data[type]['airfoil']]
             aero_node[conn[i_elem, i_node]] = True
     surface_distribution[elements] = i_surf
     surface_m[i_surf] = m
@@ -938,14 +896,15 @@ def generate_aero_file():
         for i_local_node in [0, 1, 2]:
             if not i_local_node == 0:
                 node_counter += 1
-            chord[i_elem, i_local_node] = tail_chord
-            elastic_axis[i_elem, i_local_node] = ea_tail
+            chord[i_elem, i_local_node] = aero_data[type]['chord']
+            elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
+            twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
 
     elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == tail_beam_numbersR[1,2]]
     i_surf += 1
     for i_elem in elements:
         for i_node in range(n_node_elem):
-            airfoil_distribution[i_elem, :] = 1
+            airfoil_distribution[i_elem, :] = aero_data['airfoil_indices'][aero_data[type]['airfoil']]
             aero_node[conn[i_elem, i_node]] = True
     surface_distribution[elements] = i_surf
     surface_m[i_surf] = m
@@ -954,15 +913,17 @@ def generate_aero_file():
         for i_local_node in [0, 1, 2]:
             if not i_local_node == 0:
                 node_counter += 1
-            chord[i_elem, i_local_node] = tail_chord
-            elastic_axis[i_elem, i_local_node] = ea_tail
+            chord[i_elem, i_local_node] = aero_data[type]['chord']
+            elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
+            twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
 
     # 0L tail
+    type = '0Ltail'
     elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == tail_beam_numbersL[0,1]]
     i_surf += 1
     for i_elem in elements:
         for i_node in range(n_node_elem):
-            airfoil_distribution[i_elem, :] = 1
+            airfoil_distribution[i_elem, :] = aero_data['airfoil_indices'][aero_data[type]['airfoil']]
             aero_node[conn[i_elem, i_node]] = True
     surface_distribution[elements] = i_surf
     surface_m[i_surf] = m
@@ -971,14 +932,15 @@ def generate_aero_file():
         for i_local_node in [0, 1, 2]:
             if not i_local_node == 0:
                 node_counter += 1
-            chord[i_elem, i_local_node] = tail_chord
-            elastic_axis[i_elem, i_local_node] = ea_tail
+            chord[i_elem, i_local_node] = aero_data[type]['chord']
+            elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
+            twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
 
     elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == tail_beam_numbersL[0,2]]
     i_surf += 1
     for i_elem in elements:
         for i_node in range(n_node_elem):
-            airfoil_distribution[i_elem, :] = 1
+            airfoil_distribution[i_elem, :] = aero_data['airfoil_indices'][aero_data[type]['airfoil']]
             aero_node[conn[i_elem, i_node]] = True
     surface_distribution[elements] = i_surf
     surface_m[i_surf] = m
@@ -987,16 +949,18 @@ def generate_aero_file():
         for i_local_node in [0, 1, 2]:
             if not i_local_node == 0:
                 node_counter += 1
-            chord[i_elem, i_local_node] = tail_chord
-            elastic_axis[i_elem, i_local_node] = ea_tail
+            chord[i_elem, i_local_node] = aero_data[type]['chord']
+            elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
+            twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
 
     # 1L tail
     # import pdb; pdb.set_trace()
+    type = '0Ltail'
     elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == tail_beam_numbersL[1,1]]
     i_surf += 1
     for i_elem in elements:
         for i_node in range(n_node_elem):
-            airfoil_distribution[i_elem, :] = 1
+            airfoil_distribution[i_elem, :] = aero_data['airfoil_indices'][aero_data[type]['airfoil']]
             aero_node[conn[i_elem, i_node]] = True
     surface_distribution[elements] = i_surf
     surface_m[i_surf] = m
@@ -1005,14 +969,15 @@ def generate_aero_file():
         for i_local_node in [0, 1, 2]:
             if not i_local_node == 0:
                 node_counter += 1
-            chord[i_elem, i_local_node] = tail_chord
-            elastic_axis[i_elem, i_local_node] = ea_tail
+            chord[i_elem, i_local_node] = aero_data[type]['chord']
+            elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
+            twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
 
     elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == tail_beam_numbersL[1,2]]
     i_surf += 1
     for i_elem in elements:
         for i_node in range(n_node_elem):
-            airfoil_distribution[i_elem, :] = 1
+            airfoil_distribution[i_elem, :] = aero_data['airfoil_indices'][aero_data[type]['airfoil']]
             aero_node[conn[i_elem, i_node]] = True
     surface_distribution[elements] = i_surf
     surface_m[i_surf] = m
@@ -1021,8 +986,9 @@ def generate_aero_file():
         for i_local_node in [0, 1, 2]:
             if not i_local_node == 0:
                 node_counter += 1
-            chord[i_elem, i_local_node] = tail_chord
-            elastic_axis[i_elem, i_local_node] = ea_tail
+            chord[i_elem, i_local_node] = aero_data[type]['chord']
+            elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
+            twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
 
     with h5.File(route + '/' + case_name + '.aero.h5', 'a') as h5file:
         airfoils_group = h5file.create_group('airfoils')
