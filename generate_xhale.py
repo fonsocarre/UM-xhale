@@ -9,58 +9,55 @@ route = os.path.dirname(os.path.realpath(__file__)) + '/'
 flow = ['BeamLoader',
         'AerogridLoader',
         # 'NonLinearStatic',
-        # 'StaticCoupled',
-        # 'BeamLoads',
+        # 'StaticTrim',
+        # 'StaticUvlm',
+        'StaticCoupled',
+        'BeamLoads',
         'BeamPlot',
-        'AerogridPlot'
+        'AerogridPlot',
+        'DynamicCoupled'
         ]
 
-u_inf = 10
+u_inf = 14
 rho = 1.225
-alpha = 0*np.pi/180
+alpha = 1.183767*np.pi/180
 beta = 0
 gravity = 'on'
 gravity_value = 9.81
-cs_deflection = 0.0*np.pi/180
-thrust = 0
-sigma = 1
+cs_deflection = 5.1355678*np.pi/180
+thrust = -0.3116153
+sigma = 1000
 
-gust_intensity = 0.0
+gust_intensity = 0.2
 n_step = 1
-relaxation_factor = 0.4
-tolerance = 1e-8
+relaxation_factor = 0.5
+tolerance = 1e-7
+fsi_tolerance = 1e-10
 
 span_section = 1.0
 dihedral_outer = 10*np.pi/180
 
-ea_main = 0.288
-cg_main = 0.25
-
 length_centre_tail = 0.9
 length_outer_tail = 0.65
 span_tail = 0.24
-ea_tail = 0.25
-
-main_wing_chord = 0.2
-tail_chord = 0.11
 
 n_sections = 3
 
 # DISCRETISATION
 # spatial discretisation
-m = 5
+m = 4
 n_elem_multiplier = 1
-n_elem_section = 3
-n_elem_centre_tail = 2
-n_elem_outer_tail = 2
-n_elem_tail = 1
+n_elem_section = 4
+n_elem_centre_tail = 4
+n_elem_outer_tail = 4
+n_elem_tail = 2
 n_elem_main = int(n_sections*n_elem_section*n_elem_multiplier)
-n_surfaces = 16
+n_surfaces = 14
 
 # temporal discretisation
 physical_time = 30
-tstep_factor = 1.0
-dt = 1.0/m/u_inf*tstep_factor
+tstep_factor = 0.5
+dt = 0.2/m/u_inf*tstep_factor
 n_tstep = round(physical_time/dt)
 n_tstep = 1500
 
@@ -115,8 +112,8 @@ n_node += n_node_tail - 1
 n_node += n_node_tail - 1
 
 # stiffness and mass matrices
-n_stiffness = 5
-n_mass = 5
+n_stiffness = 8
+n_mass = 8
 
 # PLACEHOLDERS
 # beam
@@ -127,6 +124,7 @@ stiffness_db = np.zeros((n_stiffness, 6, 6))
 mass_db = np.zeros((n_mass, 6, 6))
 structural_twist = np.zeros_like(x)
 beam_number = np.zeros((n_elem, ), dtype=int)
+num_node_elements = np.zeros((n_elem, ), dtype=int) + 3
 frame_of_reference_delta = np.zeros((n_elem, n_node_elem, 3))
 conn = np.zeros((n_elem, n_node_elem), dtype=int)
 elem_stiffness = np.zeros((n_elem, ), dtype=int)
@@ -134,10 +132,10 @@ elem_mass = np.zeros((n_elem, ), dtype=int)
 boundary_conditions = np.zeros((n_node, ), dtype=int)
 app_forces = np.zeros((n_node, 6))
 n_lumped_mass = 0
-lumped_mass_nodes = np.zeros((n_lumped_mass, ), dtype=int)
-lumped_mass = np.zeros((n_lumped_mass, ))
-lumped_mass_inertia = np.zeros((n_lumped_mass, 3, 3))
-lumped_mass_position = np.zeros((n_lumped_mass, 3))
+lumped_mass_nodes = None
+lumped_mass = None
+lumped_mass_inertia = None
+lumped_mass_position = None
 
 end_nodesL = np.zeros((n_sections,), dtype=int)
 end_nodesR = np.zeros((n_sections,), dtype=int)
@@ -167,6 +165,8 @@ twist = np.zeros((n_elem, n_node_elem))
 chord = np.zeros((n_elem, n_node_elem,))
 elastic_axis = np.zeros((n_elem, n_node_elem,))
 
+thrust_nodes = np.zeros((5,))
+
 
 # FUNCTIONS-------------------------------------------------------------
 def clean_test_files():
@@ -192,6 +192,7 @@ def clean_test_files():
 
 def read_beam_data(filename='inputs/beam_properties.xlsx'):
     import pandas as pd
+    import sharpy.utils.model_utils as model_utils
     # mass
     mass_sheet = pd.read_excel(filename, sheetname='mass', header=1, skip_rows=1, index_col=0)
     # remove units
@@ -199,11 +200,21 @@ def read_beam_data(filename='inputs/beam_properties.xlsx'):
     mass_data = dict()
     for index, row in mass_sheet.iterrows():
         # import pdb; pdb.set_trace()
-        mass_data[index] = np.zeros((6, 6))
-        mass_data[index][np.diag_indices(3)] = mass_sheet['mass'][index]
-        mass_data[index][3, 3] = mass_sheet['ixx'][index]
-        mass_data[index][4, 4] = mass_sheet['iyy'][index]
-        mass_data[index][5, 5] = mass_sheet['izz'][index]
+        mass_data[index] = dict()
+        mass_data[index]['mass'] = mass_sheet['mass'][index]
+        mass_data[index]['inertia'] = np.zeros((3, 3))
+        mass_data[index]['inertia'][0, 0] = mass_sheet['ixx'][index]
+        mass_data[index]['inertia'][1, 1] = mass_sheet['iyy'][index]
+        mass_data[index]['inertia'][2, 2] = mass_sheet['izz'][index]
+        mass_data[index]['xcg'] = np.zeros((3,))
+        mass_data[index]['xcg'][0] = mass_sheet['xcg'][index]
+        mass_data[index]['xcg'][1] = mass_sheet['ycg'][index]
+        mass_data[index]['xcg'][2] = mass_sheet['zcg'][index]
+
+        mass_data[index]['full_matrix'] = (
+            model_utils.mass_matrix_generator(mass_data[index]['mass'],
+                                              mass_data[index]['xcg'],
+                                              mass_data[index]['inertia']))
 
     # stiffness
     stiff_sheet = pd.read_excel(filename, sheetname='stiffness', header=1, skip_rows=1, index_col=0)
@@ -219,42 +230,107 @@ def read_beam_data(filename='inputs/beam_properties.xlsx'):
         stiff_data[index][3, 3] = stiff_sheet['gj'][index]
         stiff_data[index][4, 4] = stiff_sheet['eiy'][index]
         stiff_data[index][5, 5] = stiff_sheet['eiz'][index]
+        stiff_data[index][0, 4] = stiff_sheet['k13'][index]
+        stiff_data[index][4, 0] = stiff_sheet['k13'][index]
+        stiff_data[index][0, 5] = stiff_sheet['k14'][index]
+        stiff_data[index][5, 0] = stiff_sheet['k14'][index]
+        stiff_data[index][4, 5] = stiff_sheet['k34'][index]
+        stiff_data[index][5, 4] = stiff_sheet['k34'][index]
 
     return mass_data, stiff_data
 
 def read_lumped_mass_data(filename='inputs/lumped_mass.xlsx'):
+    import pandas as pd
+    xl = pd.ExcelFile(filename)
+    sheets = {sheet_name: xl.parse(sheet_name, header=0, skiprows=(0, 2)) for sheet_name in xl.sheet_names}
 
+    lumped_mass_data = dict()
+    for sheet, val in sheets.items():
+        lumped_mass_data[sheet] = dict()
+        lumped_mass_data[sheet]['mass'] = 0.0
+        lumped_mass_data[sheet]['inertia'] = np.zeros((3, 3))
+        lumped_mass_data[sheet]['xcg'] = np.zeros((3,))
+        # lumped_mass_data[sheet]['full_matrix'] = np.zeros((3, 3))
 
+        lumped_mass_data[sheet]['mass'] = val['Mass'][0]
+        lumped_mass_data[sheet]['inertia'][0, 0] = val['Ixx']
+        lumped_mass_data[sheet]['inertia'][1, 1] = val['Iyy']
+        lumped_mass_data[sheet]['inertia'][2, 2] = val['Izz']
+        lumped_mass_data[sheet]['inertia'][0, 1] = val['Ixy']
+        lumped_mass_data[sheet]['inertia'][1, 0] = val['Ixy']
+        lumped_mass_data[sheet]['inertia'][0, 2] = val['Ixz']
+        lumped_mass_data[sheet]['inertia'][2, 0] = val['Ixz']
+        lumped_mass_data[sheet]['inertia'][1, 2] = val['Iyz']
+        lumped_mass_data[sheet]['inertia'][2, 1] = val['Iyz']
+
+        lumped_mass_data[sheet]['xcg'][0] = val['xcg']
+        lumped_mass_data[sheet]['xcg'][1] = val['ycg']
+        lumped_mass_data[sheet]['xcg'][2] = val['zcg']
+
+        # lumped_mass_data[sheet]['full_matrix'] = (
+        #     model_utils.mass_matrix_generator(lumped_mass_data[sheet]['mass'],
+        #                                       lumped_mass_data[sheet]['xcg'],
+        #                                       lumped_mass_data[sheet]['inertia']))
+
+    return lumped_mass_data
 
 def generate_fem():
     global end_of_centre_tail_node, end_of_centre_tail_elem
 
     mass_data, stiff_data = read_beam_data()
+    lumped_mass_data = read_lumped_mass_data()
 
-    mass_db[0, ...] = mass_data['inboard']
-    mass_db[1, ...] = mass_data['outboard']
-    mass_db[2, ...] = mass_data['dihedral']
-    mass_db[3, ...] = mass_data['boom']
-    mass_db[4, ...] = mass_data['tail']
+    # import pdb; pdb.set_trace()
+    n_lumped_mass = len(lumped_mass_data)
+    lumped_mass_nodes = np.zeros((n_lumped_mass, ), dtype=int)
+    lumped_mass = np.zeros((n_lumped_mass, ))
+    lumped_mass_inertia = np.zeros((n_lumped_mass, 3, 3))
+    lumped_mass_position = np.zeros((n_lumped_mass, 3))
+    lumped_mass_indices = dict()
+    for i, k in enumerate(lumped_mass_data.keys()):
+        lumped_mass[i] = lumped_mass_data[k]['mass']
+        lumped_mass_inertia[i] = lumped_mass_data[k]['inertia']
+        lumped_mass_position[i] = lumped_mass_data[k]['xcg']
+        lumped_mass_indices[k] = i
 
-    stiffness_db[0, ...] = stiff_data['inboard']
-    stiffness_db[1, ...] = stiff_data['outboard']
-    stiffness_db[2, ...] = stiff_data['dihedral']
-    stiffness_db[3, ...] = stiff_data['boom']
-    stiffness_db[4, ...] = stiff_data['tail']
+    mass_db[0, ...] = mass_data['Linboard']['full_matrix']
+    mass_db[1, ...] = mass_data['Loutboard']['full_matrix']
+    mass_db[2, ...] = mass_data['Ldihedral']['full_matrix']
+    mass_db[3, ...] = mass_data['Rinboard']['full_matrix']
+    mass_db[4, ...] = mass_data['Routboard']['full_matrix']
+    mass_db[5, ...] = mass_data['Rdihedral']['full_matrix']
+    mass_db[6, ...] = mass_data['boom']['full_matrix']
+    mass_db[7, ...] = mass_data['tail']['full_matrix']
+
+    stiffness_db[0, ...] = sigma*stiff_data['Linboard']
+    stiffness_db[1, ...] = sigma*stiff_data['Loutboard']
+    stiffness_db[2, ...] = sigma*stiff_data['Ldihedral']
+    stiffness_db[3, ...] = sigma*stiff_data['Rinboard']
+    stiffness_db[4, ...] = sigma*stiff_data['Routboard']
+    stiffness_db[5, ...] = sigma*stiff_data['Rdihedral']
+    stiffness_db[6, ...] = sigma*stiff_data['boom']
+    stiffness_db[7, ...] = sigma*stiff_data['tail']
 
     we = 0
     wn = 0
 
     # SECTION 0R
+    # add the lumped mass of the pods
+    lumped_mass_id = 'centre_pod'
+    lumped_mass_nodes[lumped_mass_indices[lumped_mass_id]] = 0
+
+    # add thrust as applied force
+    app_forces[0, 1] = thrust
+    thrust_nodes[0] = 0
+
     beam_number[we:we + n_elem_section] = 0
     y[wn:wn + n_node_section] = np.linspace(0.0, span_section, n_node_section)
     for ielem in range(n_elem_section):
         conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
-    elem_stiffness[we:we + n_elem_section] = 0
-    elem_mass[we:we + n_elem_section] = 0
+    elem_stiffness[we:we + n_elem_section] = 3
+    elem_mass[we:we + n_elem_section] = 3
     boundary_conditions[0] = 1
     we += n_elem_section
     wn += n_node_section
@@ -262,28 +338,48 @@ def generate_fem():
     end_elementsR[0] = we - 1
 
     # SECTION 1R
+    # add the lumped mass of the pods
+    lumped_mass_id = 'R_inboard_pod'
+    lumped_mass_nodes[lumped_mass_indices[lumped_mass_id]] = wn - 1
+
+    app_forces[wn-1, 1] = thrust
+    thrust_nodes[1] = wn - 1
+
     beam_number[we:we + n_elem_section] = 1
     y[wn:wn + n_node_section - 1] = y[wn - 1] + np.linspace(0.0, span_section, n_node_section)[1:]
     for ielem in range(n_elem_section):
         conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
-    elem_stiffness[we:we + n_elem_section] = 1
-    elem_mass[we:we + n_elem_section] = 1
+    elem_stiffness[we:we + n_elem_section] = 4
+    elem_mass[we:we + n_elem_section] = 4
     we += n_elem_section
     wn += n_node_section - 1
     end_nodesR[1] = wn - 1
     end_elementsR[1] = we - 1
 
     # SECTION 2R
+    # add the lumped mass of the pods
+    lumped_mass_id = 'R_outboard_pod'
+    lumped_mass_nodes[lumped_mass_indices[lumped_mass_id]] = wn - 1
+
+    app_forces[wn-1, 1] = thrust
+    thrust_nodes[2] = wn - 1
+
     beam_number[we:we + n_elem_section] = 2
-    y[wn:wn + n_node_section - 1] = y[wn - 1] + np.linspace(0.0, span_section, n_node_section)[1:]
+    # y[wn:wn + n_node_section - 1] = y[wn - 1] + np.linspace(0.0, span_section, n_node_section)[1:]
+    y[wn:wn + n_node_section - 1] = y[wn - 1] + np.linspace(0.0,
+                                                            np.cos(dihedral_outer)*span_section,
+                                                            n_node_section)[1:]
+    z[wn:wn + n_node_section - 1] = z[wn - 1] + np.linspace(0.0,
+                                                            np.sin(dihedral_outer)*span_section,
+                                                            n_node_section)[1:]
     for ielem in range(n_elem_section):
         conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
-    elem_stiffness[we:we + n_elem_section] = 2
-    elem_mass[we:we + n_elem_section] = 2
+    elem_stiffness[we:we + n_elem_section] = 5
+    elem_mass[we:we + n_elem_section] = 5
     boundary_conditions[wn + n_node_section - 1 - 1] = -1
     we += n_elem_section
     wn += n_node_section - 1
@@ -326,28 +422,48 @@ def generate_fem():
     end_elementsL[0] = we - 1
 
     # SECTION 1L
+    # add the lumped mass of the pods
+    lumped_mass_id = 'L_inboard_pod'
+    lumped_mass_nodes[lumped_mass_indices[lumped_mass_id]] = wn - 1
+    app_forces[wn-1, 1] = -thrust
+    thrust_nodes[3] = wn - 1
+
+    rotation_mat = algebra.rotation3d_z(np.pi)
+    lumped_mass_position[lumped_mass_indices[lumped_mass_id]] = np.dot(rotation_mat,
+        lumped_mass_position[lumped_mass_indices[lumped_mass_id]])
+
     beam_number[we:we + n_elem_section] = 4
     y[wn:wn + n_node_section - 1] = y[wn - 1] + np.linspace(0.0, -span_section, n_node_section)[1:]
     for ielem in range(n_elem_section):
         conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [1.0, 0.0, 0.0]
-    elem_stiffness[we:we + n_elem_section] = 0
-    elem_mass[we:we + n_elem_section] = 0
+    elem_stiffness[we:we + n_elem_section] = 1
+    elem_mass[we:we + n_elem_section] = 1
     we += n_elem_section
     wn += n_node_section - 1
     end_nodesL[1] = wn - 1
     end_elementsL[1] = we - 1
 
     # SECTION 2L
+    # add the lumped mass of the pods
+    lumped_mass_id = 'L_outboard_pod'
+    lumped_mass_nodes[lumped_mass_indices[lumped_mass_id]] = wn - 1
+    lumped_mass_position[lumped_mass_indices[lumped_mass_id]] = np.dot(rotation_mat,
+        lumped_mass_position[lumped_mass_indices[lumped_mass_id]])
+    app_forces[wn-1, 1] = -thrust
+    thrust_nodes[4] = wn - 1
+
     beam_number[we:we + n_elem_section] = 5
-    y[wn:wn + n_node_section - 1] = y[wn - 1] + np.linspace(0.0, -span_section, n_node_section)[1:]
+    # y[wn:wn + n_node_section - 1] = y[wn - 1] + np.linspace(0.0, -span_section, n_node_section)[1:]
+    y[wn:wn + n_node_section - 1] = y[wn - 1] + np.linspace(0.0, -np.cos(dihedral_outer)*span_section, n_node_section)[1:]
+    z[wn:wn + n_node_section - 1] = z[wn - 1] + np.linspace(0.0, np.sin(dihedral_outer)*span_section, n_node_section)[1:]
     for ielem in range(n_elem_section):
         conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [1.0, 0.0, 0.0]
-    elem_stiffness[we:we + n_elem_section] = 0
-    elem_mass[we:we + n_elem_section] = 0
+    elem_stiffness[we:we + n_elem_section] = 2
+    elem_mass[we:we + n_elem_section] = 2
     boundary_conditions[wn + n_node_section - 1 - 1] = -1
     we += n_elem_section
     wn += n_node_section - 1
@@ -379,8 +495,8 @@ def generate_fem():
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [0.0, 1.0, 0.0]
     conn[we, 0] = 0
-    elem_stiffness[we:we + n_elem_centre_tail] = 3
-    elem_mass[we:we + n_elem_centre_tail] = 3
+    elem_stiffness[we:we + n_elem_centre_tail] = 6
+    elem_mass[we:we + n_elem_centre_tail] = 6
     we += n_elem_centre_tail
     wn += n_node_centre_tail - 1
     end_of_centre_tail_node = wn - 1
@@ -394,8 +510,8 @@ def generate_fem():
         conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
-    elem_stiffness[we:we + n_elem_tail] = 4
-    elem_mass[we:we + n_elem_tail] = 4
+    elem_stiffness[we:we + n_elem_tail] = 7
+    elem_mass[we:we + n_elem_tail] = 7
     boundary_conditions[wn + n_node_tail - 1 - 1] = -1
     end_tip_tail_nodeC[0] = wn + n_node_tail - 1 - 1
     end_tip_tail_elemC[0] = we + n_elem_tail - 1
@@ -411,8 +527,8 @@ def generate_fem():
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [1.0, 0.0, 0.0]
     conn[we, 0] = end_of_centre_tail_node
-    elem_stiffness[we:we + n_elem_tail] = 4
-    elem_mass[we:we + n_elem_tail] = 4
+    elem_stiffness[we:we + n_elem_tail] = 7
+    elem_mass[we:we + n_elem_tail] = 7
     boundary_conditions[wn + n_node_tail - 1 -1] = -1
     end_tip_tail_nodeC[1] = wn + n_node_tail - 1 - 1
     end_tip_tail_elemC[1] = we + n_elem_tail - 1
@@ -430,10 +546,10 @@ def generate_fem():
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [0.0, 1.0, 0.0]
     conn[we, 0] = end_nodesR[0]
-    elem_stiffness[we:we + n_elem_centre_tail] = 3
-    elem_mass[we:we + n_elem_centre_tail] = 3
-    we += n_elem_centre_tail
-    wn += n_node_centre_tail - 1
+    elem_stiffness[we:we + n_elem_outer_tail] = 6
+    elem_mass[we:we + n_elem_outer_tail] = 6
+    we += n_elem_outer_tail
+    wn += n_node_outer_tail - 1
     end_tails_nodesR[0] = wn - 1
     end_tails_elementsR[0] = we - 1
 
@@ -445,8 +561,8 @@ def generate_fem():
         conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
-    elem_stiffness[we:we + n_elem_tail] = 4
-    elem_mass[we:we + n_elem_tail] = 4
+    elem_stiffness[we:we + n_elem_tail] = 7
+    elem_mass[we:we + n_elem_tail] = 7
     boundary_conditions[wn + n_node_tail - 1 -1] = -1
     we += n_elem_tail
     wn += n_node_tail - 1
@@ -460,8 +576,8 @@ def generate_fem():
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [1.0, 0.0, 0.0]
     conn[we, 0] = end_tails_nodesR[0]
-    elem_stiffness[we:we + n_elem_tail] = 4
-    elem_mass[we:we + n_elem_tail] = 4
+    elem_stiffness[we:we + n_elem_tail] = 7
+    elem_mass[we:we + n_elem_tail] = 7
     boundary_conditions[wn + n_node_tail - 1 -1] = -1
     we += n_elem_tail
     wn += n_node_tail - 1
@@ -476,10 +592,10 @@ def generate_fem():
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [0.0, 1.0, 0.0]
     conn[we, 0] = end_nodesR[1]
-    elem_stiffness[we:we + n_elem_centre_tail] = 3
-    elem_mass[we:we + n_elem_centre_tail] = 3
-    we += n_elem_centre_tail
-    wn += n_node_centre_tail - 1
+    elem_stiffness[we:we + n_elem_outer_tail] = 6
+    elem_mass[we:we + n_elem_outer_tail] = 6
+    we += n_elem_outer_tail
+    wn += n_node_outer_tail - 1
     end_tails_nodesR[1] = wn - 1
     end_tails_elementsR[1] = we - 1
 
@@ -491,8 +607,8 @@ def generate_fem():
         conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
-    elem_stiffness[we:we + n_elem_tail] = 4
-    elem_mass[we:we + n_elem_tail] = 4
+    elem_stiffness[we:we + n_elem_tail] = 7
+    elem_mass[we:we + n_elem_tail] = 7
     boundary_conditions[wn + n_node_tail - 1 -1] = -1
     we += n_elem_tail
     wn += n_node_tail - 1
@@ -506,58 +622,58 @@ def generate_fem():
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [1.0, 0.0, 0.0]
     conn[we, 0] = end_tails_nodesR[1]
-    elem_stiffness[we:we + n_elem_tail] = 4
-    elem_mass[we:we + n_elem_tail] = 4
+    elem_stiffness[we:we + n_elem_tail] = 7
+    elem_mass[we:we + n_elem_tail] = 7
     boundary_conditions[wn + n_node_tail - 1 -1] = -1
     we += n_elem_tail
     wn += n_node_tail - 1
-
-    # # outer tail 2R
-    # beam_number[we:we + n_elem_outer_tail] = 15
-    # tail_beam_numbersR[2,0] = 15
-    # x[wn:wn + n_node_outer_tail - 1] = np.linspace(0.0, length_outer_tail, n_node_outer_tail)[1:]
-    # y[wn:wn + n_node_outer_tail - 1] = y[end_nodesR[2]]
-    # for ielem in range(n_elem_outer_tail):
-    #     conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
-    #     for inode in range(n_node_elem):
-    #         frame_of_reference_delta[we + ielem, inode, :] = [0.0, 1.0, 0.0]
-    # conn[we, 0] = end_nodesR[2]
-    # elem_stiffness[we:we + n_elem_centre_tail] = 3
-    # elem_mass[we:we + n_elem_centre_tail] = 3
-    # we += n_elem_centre_tail
-    # wn += n_node_centre_tail - 1
-    # end_tails_nodesR[2] = wn - 1
-    # end_tails_elementsR[2] = we - 1
     #
-    # beam_number[we:we + n_elem_tail] = 16
-    # tail_beam_numbersR[2,1] = 16
-    # x[wn:wn + n_node_tail - 1] = x[end_tails_nodesR[2]]
-    # y[wn:wn + n_node_tail - 1] = y[end_tails_nodesR[2]] + np.linspace(0.0, span_tail, n_node_tail)[1:]
-    # for ielem in range(n_elem_tail):
-    #     conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
-    #     for inode in range(n_node_elem):
-    #         frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
-    # elem_stiffness[we:we + n_elem_tail] = 4
-    # elem_mass[we:we + n_elem_tail] = 4
-    # boundary_conditions[wn + n_node_tail - 1 -1] = -1
-    # we += n_elem_tail
-    # wn += n_node_tail - 1
+    # # # outer tail 2R
+    # # beam_number[we:we + n_elem_outer_tail] = 15
+    # # tail_beam_numbersR[2,0] = 15
+    # # x[wn:wn + n_node_outer_tail - 1] = np.linspace(0.0, length_outer_tail, n_node_outer_tail)[1:]
+    # # y[wn:wn + n_node_outer_tail - 1] = y[end_nodesR[2]]
+    # # for ielem in range(n_elem_outer_tail):
+    # #     conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
+    # #     for inode in range(n_node_elem):
+    # #         frame_of_reference_delta[we + ielem, inode, :] = [0.0, 1.0, 0.0]
+    # # conn[we, 0] = end_nodesR[2]
+    # # elem_stiffness[we:we + n_elem_centre_tail] = 3
+    # # elem_mass[we:we + n_elem_centre_tail] = 3
+    # # we += n_elem_centre_tail
+    # # wn += n_node_centre_tail - 1
+    # # end_tails_nodesR[2] = wn - 1
+    # # end_tails_elementsR[2] = we - 1
+    # #
+    # # beam_number[we:we + n_elem_tail] = 16
+    # # tail_beam_numbersR[2,1] = 16
+    # # x[wn:wn + n_node_tail - 1] = x[end_tails_nodesR[2]]
+    # # y[wn:wn + n_node_tail - 1] = y[end_tails_nodesR[2]] + np.linspace(0.0, span_tail, n_node_tail)[1:]
+    # # for ielem in range(n_elem_tail):
+    # #     conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
+    # #     for inode in range(n_node_elem):
+    # #         frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
+    # # elem_stiffness[we:we + n_elem_tail] = 4
+    # # elem_mass[we:we + n_elem_tail] = 4
+    # # boundary_conditions[wn + n_node_tail - 1 -1] = -1
+    # # we += n_elem_tail
+    # # wn += n_node_tail - 1
+    # #
+    # # beam_number[we:we + n_elem_tail] = 17
+    # # tail_beam_numbersR[2,2] = 17
+    # # x[wn:wn + n_node_tail - 1] = x[end_tails_nodesR[2]]
+    # # y[wn:wn + n_node_tail - 1] = y[end_tails_nodesR[2]] + np.linspace(0.0, -span_tail, n_node_tail)[1:]
+    # # for ielem in range(n_elem_tail):
+    # #     conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
+    # #     for inode in range(n_node_elem):
+    # #         frame_of_reference_delta[we + ielem, inode, :] = [1.0, 0.0, 0.0]
+    # # conn[we, 0] = end_tails_nodesR[2]
+    # # elem_stiffness[we:we + n_elem_tail] = 4
+    # # elem_mass[we:we + n_elem_tail] = 4
+    # # boundary_conditions[wn + n_node_tail - 1 -1] = -1
+    # # we += n_elem_tail
+    # # wn += n_node_tail - 1
     #
-    # beam_number[we:we + n_elem_tail] = 17
-    # tail_beam_numbersR[2,2] = 17
-    # x[wn:wn + n_node_tail - 1] = x[end_tails_nodesR[2]]
-    # y[wn:wn + n_node_tail - 1] = y[end_tails_nodesR[2]] + np.linspace(0.0, -span_tail, n_node_tail)[1:]
-    # for ielem in range(n_elem_tail):
-    #     conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
-    #     for inode in range(n_node_elem):
-    #         frame_of_reference_delta[we + ielem, inode, :] = [1.0, 0.0, 0.0]
-    # conn[we, 0] = end_tails_nodesR[2]
-    # elem_stiffness[we:we + n_elem_tail] = 4
-    # elem_mass[we:we + n_elem_tail] = 4
-    # boundary_conditions[wn + n_node_tail - 1 -1] = -1
-    # we += n_elem_tail
-    # wn += n_node_tail - 1
-
     # outer tail 0L
     beam_number[we:we + n_elem_outer_tail] = 15
     tail_beam_numbersL[0,0] = 15
@@ -568,10 +684,10 @@ def generate_fem():
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [0.0, 1.0, 0.0]
     conn[we, 0] = end_nodesL[0]
-    elem_stiffness[we:we + n_elem_centre_tail] = 3
-    elem_mass[we:we + n_elem_centre_tail] = 3
-    we += n_elem_centre_tail
-    wn += n_node_centre_tail - 1
+    elem_stiffness[we:we + n_elem_outer_tail] = 6
+    elem_mass[we:we + n_elem_outer_tail] = 6
+    we += n_elem_outer_tail
+    wn += n_node_outer_tail - 1
     end_tails_nodesL[0] = wn - 1
     end_tails_elementsL[0] = we - 1
 
@@ -583,12 +699,13 @@ def generate_fem():
         conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
-    elem_stiffness[we:we + n_elem_tail] = 4
-    elem_mass[we:we + n_elem_tail] = 4
+    conn[we, 0] = end_tails_nodesL[0]
+    elem_stiffness[we:we + n_elem_tail] = 7
+    elem_mass[we:we + n_elem_tail] = 7
     boundary_conditions[wn + n_node_tail - 1 -1] = -1
     we += n_elem_tail
     wn += n_node_tail - 1
-
+    
     beam_number[we:we + n_elem_tail] = 17
     tail_beam_numbersL[0,2] = 17
     x[wn:wn + n_node_tail - 1] = x[end_tails_nodesL[0]]
@@ -598,8 +715,8 @@ def generate_fem():
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [1.0, 0.0, 0.0]
     conn[we, 0] = end_tails_nodesL[0]
-    elem_stiffness[we:we + n_elem_tail] = 4
-    elem_mass[we:we + n_elem_tail] = 4
+    elem_stiffness[we:we + n_elem_tail] = 7
+    elem_mass[we:we + n_elem_tail] = 7
     boundary_conditions[wn + n_node_tail - 1 -1] = -1
     we += n_elem_tail
     wn += n_node_tail - 1
@@ -614,13 +731,13 @@ def generate_fem():
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [0.0, 1.0, 0.0]
     conn[we, 0] = end_nodesL[1]
-    elem_stiffness[we:we + n_elem_centre_tail] = 3
-    elem_mass[we:we + n_elem_centre_tail] = 3
-    we += n_elem_centre_tail
-    wn += n_node_centre_tail - 1
+    elem_stiffness[we:we + n_elem_outer_tail] = 6
+    elem_mass[we:we + n_elem_outer_tail] = 6
+    we += n_elem_outer_tail
+    wn += n_node_outer_tail - 1
     end_tails_nodesL[1] = wn - 1
     end_tails_elementsL[1] = we - 1
-
+    
     beam_number[we:we + n_elem_tail] = 19
     tail_beam_numbersL[1,1] = 19
     x[wn:wn + n_node_tail - 1] = x[end_tails_nodesL[1]]
@@ -629,12 +746,12 @@ def generate_fem():
         conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
-    elem_stiffness[we:we + n_elem_tail] = 4
-    elem_mass[we:we + n_elem_tail] = 4
+    elem_stiffness[we:we + n_elem_tail] = 7
+    elem_mass[we:we + n_elem_tail] = 7
     boundary_conditions[wn + n_node_tail - 1 -1] = -1
     we += n_elem_tail
     wn += n_node_tail - 1
-
+    
     beam_number[we:we + n_elem_tail] = 20
     tail_beam_numbersL[1,2] = 20
     x[wn:wn + n_node_tail - 1] = x[end_tails_nodesL[1]]
@@ -644,8 +761,8 @@ def generate_fem():
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [1.0, 0.0, 0.0]
     conn[we, 0] = end_tails_nodesL[1]
-    elem_stiffness[we:we + n_elem_tail] = 4
-    elem_mass[we:we + n_elem_tail] = 4
+    elem_stiffness[we:we + n_elem_tail] = 7
+    elem_mass[we:we + n_elem_tail] = 7
     boundary_conditions[wn + n_node_tail - 1 -1] = -1
     we += n_elem_tail
     wn += n_node_tail - 1
@@ -758,13 +875,18 @@ def generate_aero_file():
     global x, y, z
 
     aero_data = read_aero_data()
-    print(aero_data)
     # control surfaces
-    n_control_surfaces = 0
+    n_control_surfaces = 1
     control_surface = np.zeros((n_elem, n_node_elem), dtype=int) - 1
     control_surface_type = np.zeros((n_control_surfaces, ), dtype=int)
     control_surface_deflection = np.zeros((n_control_surfaces, ))
     control_surface_chord = np.zeros((n_control_surfaces, ), dtype=int)
+    control_surface_hinge_coord = np.zeros((n_control_surfaces, ), dtype=float)
+
+    control_surface_type[0] = 0
+    control_surface_deflection[0] = cs_deflection
+    control_surface_chord[0] = m
+    control_surface_hinge_coord[0] = 0
 
     # right wing (surface 0, beams 0, 1, 2, 3)
     type = 'inboard'
@@ -825,6 +947,7 @@ def generate_aero_file():
             chord[i_elem, i_local_node] = aero_data[type]['chord']
             elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
             twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
+            control_surface[i_elem, i_local_node] = 0
 
     elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == tail_beam_numbersC[2]]
     i_surf += 1
@@ -842,6 +965,7 @@ def generate_aero_file():
             chord[i_elem, i_local_node] = aero_data[type]['chord']
             elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
             twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
+            control_surface[i_elem, i_local_node] = 0
 
     # 0R tail
     type = '0Rtail'
@@ -862,6 +986,7 @@ def generate_aero_file():
             chord[i_elem, i_local_node] = aero_data[type]['chord']
             elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
             twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
+            # control_surface[i_elem, i_local_node] = 0
 
     elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == tail_beam_numbersR[0,2]]
     i_surf += 1
@@ -879,6 +1004,7 @@ def generate_aero_file():
             chord[i_elem, i_local_node] = aero_data[type]['chord']
             elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
             twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
+            # control_surface[i_elem, i_local_node] = 0
 
     # 1R tail
     # import pdb; pdb.set_trace()
@@ -899,6 +1025,7 @@ def generate_aero_file():
             chord[i_elem, i_local_node] = aero_data[type]['chord']
             elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
             twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
+            # control_surface[i_elem, i_local_node] = 0
 
     elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == tail_beam_numbersR[1,2]]
     i_surf += 1
@@ -916,6 +1043,7 @@ def generate_aero_file():
             chord[i_elem, i_local_node] = aero_data[type]['chord']
             elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
             twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
+            # control_surface[i_elem, i_local_node] = 0
 
     # 0L tail
     type = '0Ltail'
@@ -935,7 +1063,8 @@ def generate_aero_file():
             chord[i_elem, i_local_node] = aero_data[type]['chord']
             elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
             twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
-
+            # control_surface[i_elem, i_local_node] = 0
+    
     elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == tail_beam_numbersL[0,2]]
     i_surf += 1
     for i_elem in elements:
@@ -952,7 +1081,8 @@ def generate_aero_file():
             chord[i_elem, i_local_node] = aero_data[type]['chord']
             elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
             twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
-
+            # control_surface[i_elem, i_local_node] = 0
+    
     # 1L tail
     # import pdb; pdb.set_trace()
     type = '0Ltail'
@@ -972,7 +1102,8 @@ def generate_aero_file():
             chord[i_elem, i_local_node] = aero_data[type]['chord']
             elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
             twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
-
+            # control_surface[i_elem, i_local_node] = 0
+    
     elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == tail_beam_numbersL[1,2]]
     i_surf += 1
     for i_elem in elements:
@@ -989,6 +1120,7 @@ def generate_aero_file():
             chord[i_elem, i_local_node] = aero_data[type]['chord']
             elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
             twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
+            # control_surface[i_elem, i_local_node] = 0
 
     with h5.File(route + '/' + case_name + '.aero.h5', 'a') as h5file:
         airfoils_group = h5file.create_group('airfoils')
@@ -1019,6 +1151,7 @@ def generate_aero_file():
         control_surface_deflection_input = h5file.create_dataset('control_surface_deflection', data=control_surface_deflection)
         control_surface_chord_input = h5file.create_dataset('control_surface_chord', data=control_surface_chord)
         control_surface_types_input = h5file.create_dataset('control_surface_type', data=control_surface_type)
+        control_surface_hinge_coord_input = h5file.create_dataset('control_surface_hinge_coord', data=control_surface_hinge_coord)
 
 def load_airfoil(filename):
     data = np.loadtxt(filename, skiprows=1)
@@ -1065,11 +1198,11 @@ def generate_solver_file():
                                   'mstar': 30,
                                   'freestream_dir': ['1', '0', '0']}
 
-    settings['NonLinearStatic'] = {'print_info': 'on',
+    settings['NonLinearStatic'] = {'print_info': 'off',
                                    'max_iterations': 350,
-                                   'num_load_steps': 5,
-                                   'delta_curved': 1e-15,
-                                   'min_delta': 1e-8,
+                                   'num_load_steps': 20,
+                                   'delta_curved': 1e-6,
+                                   'min_delta': tolerance,
                                    'gravity_on': gravity,
                                    'gravity': gravity_value}
     settings['StaticUvlm'] = {'print_info': 'on',
@@ -1091,9 +1224,68 @@ def generate_solver_file():
                                  'aero_solver_settings': settings['StaticUvlm'],
                                  'max_iter': 100,
                                  'n_load_steps': n_step,
-                                 'tolerance': tolerance,
+                                 'tolerance': fsi_tolerance,
                                  'relaxation_factor': relaxation_factor}
 
+    settings['NonLinearDynamicCoupledStep'] = {'print_info': 'off',
+                                               'max_iterations': 950,
+                                               'delta_curved': 1e-7,
+                                               'min_delta': tolerance,
+                                               'newmark_damp': 0*5e-1,
+                                               'gravity_on': gravity,
+                                               'gravity': gravity_value,
+                                               'num_steps': n_tstep,
+                                               'dt': dt}
+    settings['StaticTrim'] = {'solver': 'StaticCoupled',
+                              'solver_settings': settings['StaticCoupled'],
+                              'initial_alpha': alpha,
+                              'initial_deflection': cs_deflection,
+                              'initial_thrust': thrust,
+                              'thrust_nodes': thrust_nodes}
+
+    settings['StepUvlm'] = {'print_info': 'off',
+                            'horseshoe': 'off',
+                            'num_cores': 4,
+                            'n_rollup': 0,
+                            'convection_scheme': 2,
+                            'rollup_dt': dt,
+                            'rollup_aic_refresh': 1,
+                            'rollup_tolerance': 1e-4,
+                            'velocity_field_generator': 'GustVelocityField',
+                            'velocity_field_input': {'u_inf': u_inf,
+                                                     'u_inf_direction': [1., 0, 0],
+                                                     'gust_shape': '1-cos',
+                                                     'gust_length': 60,
+                                                     'gust_intensity': gust_intensity*u_inf,
+                                                     'offset': 10.0,
+                                                     'span': span_main},
+                            'rho': rho,
+                            'n_time_steps': n_tstep,
+                            'dt': dt}
+
+    settings['DynamicCoupled'] = {'structural_solver': 'NonLinearDynamicCoupledStep',
+                                  'structural_solver_settings': settings['NonLinearDynamicCoupledStep'],
+                                  'aero_solver': 'StepUvlm',
+                                  'aero_solver_settings': settings['StepUvlm'],
+                                  'fsi_substeps': 200,
+                                  'fsi_tolerance': fsi_tolerance,
+                                  'relaxation_factor': relaxation_factor,
+                                  'minimum_steps': 1,
+                                  'relaxation_steps': 50,
+                                  'final_relaxation_factor': 0.0,
+                                  'n_time_steps': n_tstep,
+                                  'dt': dt,
+                                  'include_unsteady_force_contribution': 'off',
+                                  'postprocessors': ['BeamLoads', 'BeamPlot', 'AerogridPlot'],
+                                  'postprocessors_settings': {'BeamLoads': {},
+                                                              'BeamPlot': {'folder': route + '/output/',
+                                                                           'include_rbm': 'on',
+                                                                           'include_applied_forces': 'on'},
+                                                              'AerogridPlot': {
+                                                                  'folder': route + '/output/',
+                                                                  'include_rbm': 'on',
+                                                                  'include_applied_forces': 'on',
+                                                                  'minus_m_star': 0}}}
     settings['BeamPlot'] = {'folder': route + '/output/',
                             'include_rbm': 'on',
                             'include_applied_forces': 'on',
