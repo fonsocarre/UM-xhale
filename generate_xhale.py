@@ -9,16 +9,17 @@ cases = [
     # 'gravity_only',
     # 'tip_force',
     # 'tip_moment',
-    # 'aeroelastic_aoa0',
-    # 'aeroelastic_aoa3',
-    # 'aeroelastic_aoa5',
-    'aeroelastic_trim',
+    # # 'aeroelastic_aoa0',
+    # # 'aeroelastic_aoa3',
+    # # 'aeroelastic_aoa5',
+    # # 'aeroelastic_trim',
     # 'aeroelastic_statictrim',
     # 'aero_only',
+    'cog',
     ]
-structural_cases = ['gravity_only', 'tip_force', 'tip_moment']
+structural_cases = ['cog', 'gravity_only', 'tip_force', 'tip_moment']
 
-horseshoe = 'on'
+horseshoe = 'off'
 
 for case in cases:
     vertical_tail = True
@@ -46,7 +47,6 @@ for case in cases:
                 'BeamLoads',
                 'BeamPlot',
                 'AerogridPlot',
-                'DynamicCoupled'
                 ]
         if case == 'aeroelastic_statictrim':
             # aeroelastic simulations
@@ -67,11 +67,15 @@ for case in cases:
                     # 'BeamLoads',
                     'BeamPlot',
                     'AerogridPlot',
+                    'DynamicCoupled',
                     ]
 
 
     u_inf = 14
-    rho = 1.225*0
+    rho = 1.225
+    if case == 'cog':
+        rho = 0.0
+
     in_structural_twist = 5*np.pi/180
     if vertical_tail:
         if case in structural_cases:
@@ -83,13 +87,14 @@ for case in cases:
             thrustC = 0
             differential = 0
         else:
-            alpha = 0*2.59034*np.pi/180
+            alpha = 2.59034*np.pi/180
             beta = 0.*np.pi/180
-            cs_deflection = 0*1.14867*np.pi/180
+            cs_deflection = 1.14867*np.pi/180
             aileron_deflection = 0*0.039011*np.pi/180
-            thrustC = 0*0.179577
+            thrustC = 0.179577
             differential = 0
             roll = 0
+            in_structural_twist = 5*np.pi/180
 
             if case == 'aeroelastic_aoa0':
                 alpha = 0
@@ -125,9 +130,9 @@ for case in cases:
                 differential = 0
                 # in_structural_twist = 0
             elif case == 'aeroelastic_statictrim':
-                alpha = 2.27*np.pi/180
+                alpha = 2.57*np.pi/180
                 beta = 0.*np.pi/180
-                cs_deflection = 0.44*np.pi/180
+                cs_deflection = 1.54*np.pi/180
                 aileron_deflection = 0*0.039011*np.pi/180
                 thrustC = 0.199
                 differential = 0
@@ -136,12 +141,13 @@ for case in cases:
     else:
         raise NotImplementedError()
 
-    gravity = 'off'
-    print('gravity off')
+    gravity = 'on'
+    gravity_value = 9.807
     if case in ['tip_force', 'tip_moment']:
         gravity = 'off'
+    elif case == 'cog':
+        gravity_value = 0.0
 
-    gravity_value = 9.807
     sigma = 1
     ga_mult = 0.1
 
@@ -157,37 +163,40 @@ for case in cases:
     if case == 'tip_moment':
         n_structural_steps = 20
     if case == 'gravity_only':
-        n_structural_steps = 5
+        n_structural_steps = 2
     if case == 'aeroelastic_statictrim':
-        n_step = 2
+        n_step = 1
 
     static_relaxation_factor = 0.5
     initial_relaxation_factor = 0.3
     final_relaxation_factor = 0.5
     relaxation_steps = 50
     tolerance = 1e-6
-    fsi_tolerance = 1e-8
+    fsi_tolerance = 1e-6
     wake_length = 4 # meters
 
     span_section = 1.0
     dihedral_outer = 10*np.pi/180
 
-    length_centre_tail = 0.9
+    length_centre_tail = 1.106
     length_outer_tail = 0.65
     span_tail = 0.24
-    span_fin = 0.13
+    span_ctail_L = 0.145
+    span_ctail_R = 0.24
+    span_fin = 0.184
+    span_vfin = 0.13
 
     n_sections = 3
 
 # DISCRETISATION
 # spatial discretisation
     m = 8
-    m_tail = 3
+    m_tail = 8
     m_fin = 4
 
-    m = 8
-    m_tail = 3
-    m_fin = 8
+    # m = 16
+    # m_tail = 4
+    # m_fin = 8
 
     # print('CAUTION: ALL SURFACES M=8!!!')
     # m = 8
@@ -201,14 +210,14 @@ for case in cases:
     print('mstar = ', mstar)
 # dont change n_elem_mult
     n_elem_multiplier = 1
-    n_elem_section = 5
-    n_elem_section_dihedral = 8
-    n_elem_centre_tail = 1
-    n_elem_outer_tail = 1
-    n_elem_tail = 1
-    n_elem_fin = 1
+    n_elem_section = 4
+    n_elem_section_dihedral = 4
+    n_elem_centre_tail = 2
+    n_elem_outer_tail = 2
+    n_elem_tail = 2
+    n_elem_fin = 2
     n_elem_main = int((n_sections-1)*n_elem_section*n_elem_multiplier + n_elem_section_dihedral)
-    n_surfaces = 17
+    n_surfaces = 20
 
 # temporal discretisation
     physical_time = 30
@@ -228,12 +237,15 @@ for case in cases:
     n_elem += n_elem_centre_tail
     n_elem += n_elem_tail
     n_elem += n_elem_tail
+    n_elem += n_elem_fin
     n_elem += n_elem_outer_tail
     n_elem += n_elem_tail
     n_elem += n_elem_tail
+    n_elem += n_elem_fin
     n_elem += n_elem_outer_tail
     n_elem += n_elem_tail
     n_elem += n_elem_tail
+    n_elem += n_elem_fin
     n_elem += n_elem_outer_tail
     n_elem += n_elem_tail
     n_elem += n_elem_tail
@@ -261,12 +273,15 @@ for case in cases:
     n_node += n_node_centre_tail - 1
     n_node += n_node_tail - 1
     n_node += n_node_tail - 1
+    n_node += n_node_fin - 1
     n_node += n_node_outer_tail - 1
     n_node += n_node_tail - 1
     n_node += n_node_tail - 1
+    n_node += n_node_fin - 1
     n_node += n_node_outer_tail - 1
     n_node += n_node_tail - 1
     n_node += n_node_tail - 1
+    n_node += n_node_fin - 1
     n_node += n_node_outer_tail - 1
     n_node += n_node_tail - 1
     n_node += n_node_tail - 1
@@ -281,7 +296,7 @@ for case in cases:
 
 # stiffness and mass matrices
     n_stiffness = 12
-    n_mass = 14
+    n_mass = 17
 
 # PLACEHOLDERS
 # beam
@@ -326,6 +341,9 @@ for case in cases:
     fin_beam_numberC = 0
     fin_beam_numberL = 0
     fin_beam_numberR = 0
+    vfin_beam_numberC = 0
+    vfin_beam_numberL = 0
+    vfin_beam_numberR = 0
     fin_beam_numberLL = 0
     fin_beam_numberRR = 0
 
@@ -452,6 +470,7 @@ for case in cases:
     def generate_fem():
         global end_of_centre_tail_node, end_of_centre_tail_elem
         global fin_beam_numberC, fin_beam_numberL, fin_beam_numberR
+        global vfin_beam_numberC, vfin_beam_numberL, vfin_beam_numberR
         global fin_beam_numberLL, fin_beam_numberRR
 
         mass_data, stiff_data = read_beam_data()
@@ -491,6 +510,9 @@ for case in cases:
         mass_db[11, ...] = mass_data['Rfin']['full_matrix']
         mass_db[12, ...] = mass_data['LLfin']['full_matrix']
         mass_db[13, ...] = mass_data['RRfin']['full_matrix']
+        mass_db[14, ...] = mass_data['Cvfin']['full_matrix']
+        mass_db[15, ...] = mass_data['Lvfin']['full_matrix']
+        mass_db[16, ...] = mass_data['Rvfin']['full_matrix']
 
         stiffness_db[0, ...] = sigma*stiff_data['Linboard']
         stiffness_db[1, ...] = sigma*stiff_data['Loutboard']
@@ -693,7 +715,7 @@ for case in cases:
             tail_beam_numbersC[1] = 7
             x[wn:wn + n_node_tail - 1] = x[wn - 1]
             y[wn:wn + n_node_tail - 1] = y[wn - 1]
-            z[wn:wn + n_node_tail - 1] = z[wn - 1] + np.linspace(0.0, span_tail, n_node_tail)[1:]
+            z[wn:wn + n_node_tail - 1] = z[wn - 1] + np.linspace(0.0, span_ctail_R, n_node_tail)[1:]
             for ielem in range(n_elem_tail):
                 conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
                 for inode in range(n_node_elem):
@@ -710,7 +732,7 @@ for case in cases:
             tail_beam_numbersC[2] = 8
             x[wn:wn + n_node_tail - 1] = x[end_of_centre_tail_node]
             y[wn:wn + n_node_tail - 1] = y[wn - 1]
-            z[wn:wn + n_node_tail - 1] = z[end_of_centre_tail_node] + np.linspace(0.0, -span_tail, n_node_tail)[1:]
+            z[wn:wn + n_node_tail - 1] = z[end_of_centre_tail_node] + np.linspace(0.0, -span_ctail_L, n_node_tail)[1:]
             for ielem in range(n_elem_tail):
                 conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
                 for inode in range(n_node_elem):
@@ -728,7 +750,7 @@ for case in cases:
             beam_number[we:we + n_elem_tail] = 7
             tail_beam_numbersC[1] = 7
             x[wn:wn + n_node_tail - 1] = x[wn - 1]
-            y[wn:wn + n_node_tail - 1] = y[wn - 1] + np.linspace(0.0, span_tail, n_node_tail)[1:]
+            y[wn:wn + n_node_tail - 1] = y[wn - 1] + np.linspace(0.0, span_ctail_R, n_node_tail)[1:]
             for ielem in range(n_elem_tail):
                 conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
                 for inode in range(n_node_elem):
@@ -744,7 +766,7 @@ for case in cases:
             beam_number[we:we + n_elem_tail] = 8
             tail_beam_numbersC[2] = 8
             x[wn:wn + n_node_tail - 1] = x[end_of_centre_tail_node]
-            y[wn:wn + n_node_tail - 1] = y[end_of_centre_tail_node] + np.linspace(0.0, -span_tail, n_node_tail)[1:]
+            y[wn:wn + n_node_tail - 1] = y[end_of_centre_tail_node] + np.linspace(0.0, -span_ctail_L, n_node_tail)[1:]
             for ielem in range(n_elem_tail):
                 conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
                 for inode in range(n_node_elem):
@@ -944,7 +966,7 @@ for case in cases:
         we += n_elem_tail
         wn += n_node_tail - 1
 
-        # vertical fins
+        # vertical fins (pods)
         # centre one
         beam_number[we:we + n_elem_fin] = 21
         fin_beam_numberC = 21
@@ -996,7 +1018,7 @@ for case in cases:
         we += n_elem_fin
         wn += n_node_fin - 1
 
-        # left one
+        # left outer one
         beam_number[we:we + n_elem_fin] = 24
         fin_beam_numberLL = 24
         x[wn:wn + n_node_fin - 1] = x[end_nodesL[1]]
@@ -1013,7 +1035,7 @@ for case in cases:
         we += n_elem_fin
         wn += n_node_fin - 1
 
-        # right one
+        # right outer one
         beam_number[we:we + n_elem_fin] = 25
         fin_beam_numberRR = 25
         x[wn:wn + n_node_fin - 1] = x[end_nodesR[1]]
@@ -1029,6 +1051,59 @@ for case in cases:
         boundary_conditions[wn + n_node_fin - 1 - 1] = -1
         we += n_elem_fin
         wn += n_node_fin - 1
+
+        # vertical fins
+        # centre one
+        beam_number[we:we + n_elem_fin] = 26
+        vfin_beam_numberC = 26
+        x[wn:wn + n_node_fin - 1] = x[end_of_centre_tail_node]
+        y[wn:wn + n_node_fin - 1] = y[end_of_centre_tail_node]
+        z[wn:wn + n_node_fin - 1] = z[end_of_centre_tail_node] + np.linspace(0.0, -span_vfin, n_node_fin)[1:]
+        for ielem in range(n_elem_fin):
+            conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
+            for inode in range(n_node_elem):
+                frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
+        conn[we, 0] = end_of_centre_tail_node
+        elem_stiffness[we:we + n_elem_fin] = 10
+        elem_mass[we:we + n_elem_fin] = 14
+        boundary_conditions[wn + n_node_fin - 1 - 1] = -1
+        we += n_elem_fin
+        wn += n_node_fin - 1
+
+        # left one
+        beam_number[we:we + n_elem_fin] = 27
+        vfin_beam_numberL = 27
+        x[wn:wn + n_node_fin - 1] = x[end_tails_nodesL[0]]
+        y[wn:wn + n_node_fin - 1] = y[end_tails_nodesL[0]]
+        z[wn:wn + n_node_fin - 1] = z[end_tails_nodesL[0]] + np.linspace(0.0, -span_vfin, n_node_fin)[1:]
+        for ielem in range(n_elem_fin):
+            conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
+            for inode in range(n_node_elem):
+                frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
+        conn[we, 0] = end_tails_nodesL[0]
+        elem_stiffness[we:we + n_elem_fin] = 10
+        elem_mass[we:we + n_elem_fin] = 15
+        boundary_conditions[wn + n_node_fin - 1 - 1] = -1
+        we += n_elem_fin
+        wn += n_node_fin - 1
+
+        # right one
+        beam_number[we:we + n_elem_fin] = 28
+        vfin_beam_numberR = 28
+        x[wn:wn + n_node_fin - 1] = x[end_tails_nodesR[0]]
+        y[wn:wn + n_node_fin - 1] = y[end_tails_nodesR[0]]
+        z[wn:wn + n_node_fin - 1] = z[end_tails_nodesR[0]] + np.linspace(0.0, -span_vfin, n_node_fin)[1:]
+        for ielem in range(n_elem_fin):
+            conn[we + ielem, :] = ((np.ones((3, ))*(we + ielem)*(n_node_elem - 1)) + np.array([0, 2, 1]))
+            for inode in range(n_node_elem):
+                frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
+        conn[we, 0] = end_tails_nodesR[0]
+        elem_stiffness[we:we + n_elem_fin] = 11
+        elem_mass[we:we + n_elem_fin] = 16
+        boundary_conditions[wn + n_node_fin - 1 - 1] = -1
+        we += n_elem_fin
+        wn += n_node_fin - 1
+
 
         if False:
             import matplotlib.pyplot as plt
@@ -1091,6 +1166,7 @@ for case in cases:
     def generate_aero_file():
         global x, y, z
         global fin_beam_numberC, fin_beam_numberL, fin_beam_numberR
+        global vfin_beam_numberC, vfin_beam_numberL, vfin_beam_numberR
         global fin_beam_numberLL, fin_beam_numberRR
 
         aero_data = read_aero_data()
@@ -1444,6 +1520,64 @@ for case in cases:
 
         type = 'RRfin'
         elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == fin_beam_numberRR]
+        i_surf += 1
+        for i_elem in elements:
+            for i_node in range(n_node_elem):
+                airfoil_distribution[i_elem, :] = aero_data['airfoil_indices'][aero_data[type]['airfoil']]
+                aero_node[conn[i_elem, i_node]] = True
+        surface_distribution[elements] = i_surf
+        surface_m[i_surf] = fin_m
+        node_counter = 0
+        for i_elem in elements:
+            for i_local_node in [0, 1, 2]:
+                if not i_local_node == 0:
+                    node_counter += 1
+                chord[i_elem, i_local_node] = aero_data[type]['chord']
+                elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
+                twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
+
+        type = 'Cvfin'
+        cfin_chord = aero_data[type]['chord']
+        cfin_m = m_fin
+        elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == vfin_beam_numberC]
+        i_surf += 1
+        for i_elem in elements:
+            for i_node in range(n_node_elem):
+                airfoil_distribution[i_elem, :] = aero_data['airfoil_indices'][aero_data[type]['airfoil']]
+                aero_node[conn[i_elem, i_node]] = True
+        surface_distribution[elements] = i_surf
+        surface_m[i_surf] = cfin_m
+        node_counter = 0
+        for i_elem in elements:
+            for i_local_node in [0, 1, 2]:
+                if not i_local_node == 0:
+                    node_counter += 1
+                chord[i_elem, i_local_node] = aero_data[type]['chord']
+                elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
+                twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
+
+        type = 'Lvfin'
+        lfin_chord = aero_data[type]['chord']
+        fin_m = m_fin
+        elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == vfin_beam_numberL]
+        i_surf += 1
+        for i_elem in elements:
+            for i_node in range(n_node_elem):
+                airfoil_distribution[i_elem, :] = aero_data['airfoil_indices'][aero_data[type]['airfoil']]
+                aero_node[conn[i_elem, i_node]] = True
+        surface_distribution[elements] = i_surf
+        surface_m[i_surf] = fin_m
+        node_counter = 0
+        for i_elem in elements:
+            for i_local_node in [0, 1, 2]:
+                if not i_local_node == 0:
+                    node_counter += 1
+                chord[i_elem, i_local_node] = aero_data[type]['chord']
+                elastic_axis[i_elem, i_local_node] = aero_data[type]['elastic_axis']
+                twist[i_elem, i_local_node] = -aero_data[type]['twist']*np.pi/180
+
+        type = 'Rvfin'
+        elements = np.linspace(0, n_elem - 1, n_elem, dtype=int)[beam_number == vfin_beam_numberR]
         i_surf += 1
         for i_elem in elements:
             for i_node in range(n_node_elem):
