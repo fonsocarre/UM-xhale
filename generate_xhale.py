@@ -7,19 +7,19 @@ route = os.path.dirname(os.path.realpath(__file__)) + '/'
 
 cases = [
     # 'gravity_only',
-    # 'tip_force',
-    # 'tip_moment',
-    # # 'aeroelastic_aoa0',
-    # # 'aeroelastic_aoa3',
-    # # 'aeroelastic_aoa5',
-    # # 'aeroelastic_trim',
+    'tip_force',
+    'tip_moment',
+    # 'aeroelastic_aoa0',
+    # 'aeroelastic_aoa3',
+    # 'aeroelastic_aoa5',
+    # 'aeroelastic_trim',
     # 'aeroelastic_statictrim',
     # 'aero_only',
     'cog',
     ]
 structural_cases = ['cog', 'gravity_only', 'tip_force', 'tip_moment']
 
-horseshoe = 'off'
+horseshoe = 'on'
 
 for case in cases:
     vertical_tail = True
@@ -154,12 +154,12 @@ for case in cases:
     gust_intensity = 0.20
     gust_length = 15*0.2
 
-    n_step = 3
+    n_step = 1
     if case == 'aeroelastic_aoa5':
         n_step = 6
     n_structural_steps = 1
     if case in ['structural_cases']:
-        n_structural_steps = 20
+        n_structural_steps = 2
     if case == 'tip_moment':
         n_structural_steps = 20
     if case == 'gravity_only':
@@ -184,14 +184,15 @@ for case in cases:
     span_ctail_L = 0.145
     span_ctail_R = 0.24
     span_fin = 0.184
-    span_vfin = 0.13
+    span_vfin = 0.15
 
     n_sections = 3
 
 # DISCRETISATION
 # spatial discretisation
     m = 8
-    m_tail = 8
+    m = 16
+    m_tail = 3
     m_fin = 4
 
     # m = 16
@@ -211,11 +212,11 @@ for case in cases:
 # dont change n_elem_mult
     n_elem_multiplier = 1
     n_elem_section = 4
-    n_elem_section_dihedral = 4
-    n_elem_centre_tail = 2
-    n_elem_outer_tail = 2
-    n_elem_tail = 2
-    n_elem_fin = 2
+    n_elem_section_dihedral = 8
+    n_elem_centre_tail = 1
+    n_elem_outer_tail = 1
+    n_elem_tail = 1
+    n_elem_fin = 1
     n_elem_main = int((n_sections-1)*n_elem_section*n_elem_multiplier + n_elem_section_dihedral)
     n_surfaces = 20
 
@@ -528,6 +529,7 @@ for case in cases:
         stiffness_db[11, ...] = sigma*stiff_data['Rfin']
 
         rotation_mat = algebra.rotation3d_z(np.pi)
+        rotation_mat_x = algebra.rotation3d_x(-in_structural_twist)
 
         we = 0
         wn = 0
@@ -535,8 +537,14 @@ for case in cases:
         # SECTION 0R
         # add the lumped mass of the pods
         lumped_mass_id = 'centre_pod'
+        # for i in range(len(lumped_mass_indices[lumped_mass_id])):
+            # lumped_mass_nodes[lumped_mass_indices[lumped_mass_id][i]] = 0
         for i in range(len(lumped_mass_indices[lumped_mass_id])):
             lumped_mass_nodes[lumped_mass_indices[lumped_mass_id][i]] = 0
+            lumped_mass_position[lumped_mass_indices[lumped_mass_id][i]] = np.dot(rotation_mat_x,
+                                                                                  np.dot(np.eye(3),
+                                                                                         lumped_mass_position[lumped_mass_indices[lumped_mass_id][i]])
+                                                                            )
 
         # add thrust as applied force
         app_forces[0, 0:3] = thrustC*np.array([0.0, np.cos(in_structural_twist), -np.sin(in_structural_twist)])
@@ -562,6 +570,10 @@ for case in cases:
         lumped_mass_id = 'R_inboard_pod'
         for i in range(len(lumped_mass_indices[lumped_mass_id])):
             lumped_mass_nodes[lumped_mass_indices[lumped_mass_id][i]] = wn - 1
+            lumped_mass_position[lumped_mass_indices[lumped_mass_id][i]] = np.dot(rotation_mat_x,
+                                                                                  np.dot(np.eye(3),
+                                                                                         lumped_mass_position[lumped_mass_indices[lumped_mass_id][i]])
+                                                                            )
 
         app_forces[wn-1, 0:3] = thrustC*np.array([0.0, np.cos(in_structural_twist), -np.sin(in_structural_twist)])
         thrust_nodes[1] = wn - 1
@@ -583,8 +595,14 @@ for case in cases:
         # SECTION 2R
         # add the lumped mass of the pods
         lumped_mass_id = 'R_outboard_pod'
+        # for i in range(len(lumped_mass_indices[lumped_mass_id])):
+            # lumped_mass_nodes[lumped_mass_indices[lumped_mass_id][i]] = wn - 1
         for i in range(len(lumped_mass_indices[lumped_mass_id])):
             lumped_mass_nodes[lumped_mass_indices[lumped_mass_id][i]] = wn - 1
+            lumped_mass_position[lumped_mass_indices[lumped_mass_id][i]] = np.dot(rotation_mat_x,
+                                                                                  np.dot(np.eye(3),
+                                                                                         lumped_mass_position[lumped_mass_indices[lumped_mass_id][i]])
+                                                                            )
 
         app_forces[wn-1, 0:3] = thrustC*(1 + differential)*np.array([0.0, np.cos(in_structural_twist), -np.sin(in_structural_twist)])
         thrust_nodes[1] = wn - 1
@@ -615,11 +633,9 @@ for case in cases:
         if case == 'tip_force':
             app_forces[end_nodesR[2], 2] = 15*np.cos(5*np.pi/180)
             app_forces[end_nodesR[2], 1] = 15*np.sin(5*np.pi/180)
-            # app_forces[end_nodesR[2], 2] = 15
         elif case == 'tip_moment':
             app_forces[end_nodesR[2], 4] = -30*np.cos(5*np.pi/180)
             app_forces[end_nodesR[2], 5] = 30*np.sin(5*np.pi/180)
-            # app_forces[end_nodesR[2], 4] = -30
 
         # SECTION 0L
         beam_number[we:we + n_elem_section] = 3
@@ -642,8 +658,12 @@ for case in cases:
         lumped_mass_id = 'L_inboard_pod'
         for i in range(len(lumped_mass_indices[lumped_mass_id])):
             lumped_mass_nodes[lumped_mass_indices[lumped_mass_id][i]] = wn - 1
-            lumped_mass_position[lumped_mass_indices[lumped_mass_id][i]] = np.dot(rotation_mat,
-                lumped_mass_position[lumped_mass_indices[lumped_mass_id][i]])
+            lumped_mass_position[lumped_mass_indices[lumped_mass_id][i]] = np.dot(rotation_mat_x.T,
+                                                                                  np.dot(rotation_mat,
+                                                                                         lumped_mass_position[lumped_mass_indices[lumped_mass_id][i]])
+                                                                            )
+            lumped_mass_position[lumped_mass_indices[lumped_mass_id][i]][0] *= -1
+            # lumped_mass_position[lumped_mass_indices[lumped_mass_id][i]][1] *= -1
         app_forces[wn-1, 0:3] = thrustC*np.array([0.0, -np.cos(in_structural_twist), -np.sin(in_structural_twist)])
         thrust_nodes[3] = wn - 1
 
@@ -667,8 +687,11 @@ for case in cases:
         lumped_mass_id = 'L_outboard_pod'
         for i in range(len(lumped_mass_indices[lumped_mass_id])):
             lumped_mass_nodes[lumped_mass_indices[lumped_mass_id][i]] = wn - 1
-            lumped_mass_position[lumped_mass_indices[lumped_mass_id][i]] = np.dot(rotation_mat,
-                lumped_mass_position[lumped_mass_indices[lumped_mass_id][i]])
+            lumped_mass_position[lumped_mass_indices[lumped_mass_id][i]] = np.dot(rotation_mat_x.T,
+                                                                                  np.dot(rotation_mat,
+                                                                                         lumped_mass_position[lumped_mass_indices[lumped_mass_id][i]]))
+            lumped_mass_position[lumped_mass_indices[lumped_mass_id][i]][0] *= -1
+            # lumped_mass_position[lumped_mass_indices[lumped_mass_id][i]][1] *= -1
         # app_forces[wn-1, 1] = -thrustL
         # thrust_nodes[4] = wn - 1
         app_forces[wn-1, 0:3] = thrustC*(1 - differential)*np.array([0.0, -np.cos(in_structural_twist), -np.sin(in_structural_twist)])
@@ -1064,7 +1087,7 @@ for case in cases:
             for inode in range(n_node_elem):
                 frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
         conn[we, 0] = end_of_centre_tail_node
-        elem_stiffness[we:we + n_elem_fin] = 10
+        elem_stiffness[we:we + n_elem_fin] = 9
         elem_mass[we:we + n_elem_fin] = 14
         boundary_conditions[wn + n_node_fin - 1 - 1] = -1
         we += n_elem_fin
